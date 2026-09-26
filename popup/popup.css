@@ -45,6 +45,7 @@ section { padding: 10px 14px; }
 .history .title a:hover { text-decoration: underline; }
 .history .meta { color: var(--muted); font-size: 12px; }
 .history .error { color: var(--error); font-size: 12px; word-break: break-word; }
+.history .retry { margin-top: 6px; padding: 4px 10px; font-size: 12px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }
 .dot.error { background: var(--error); }
 footer { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); }

@@ -65,14 +65,53 @@ test('surfaces GitHub error messages with status codes', () =>
     },
   ));
 
-test('checkAccess reports push permission and branch', () =>
+const REPO = { full_name: 'yaojiejia/myLeet', default_branch: 'main', private: false, permissions: { push: true } };
+
+test('checkAccess probes write access with a dangling blob', () =>
   withFetch(
-    (call) =>
-      call.url.endsWith('/branches/main')
-        ? { body: { name: 'main' } }
-        : { body: { full_name: 'yaojiejia/myLeet', default_branch: 'main', private: false, permissions: { push: true } } },
+    (call) => {
+      if (call.url.endsWith('/branches/main')) return { body: { name: 'main' } };
+      if (call.url.endsWith('/git/blobs')) return { status: 201, body: { sha: 'blob' } };
+      return { body: REPO };
+    },
+    async (calls) => {
+      const info = await client.checkAccess();
+      assert.equal(info.canPush, true);
+      assert.equal(info.pushError, null);
+      assert.equal(info.fullName, 'yaojiejia/myLeet');
+      const probe = calls.find((c) => c.url.endsWith('/git/blobs'));
+      assert.equal(probe.method, 'POST');
+    },
+  ));
+
+test('checkAccess reports a read-only token even though the user owns the repo', () =>
+  withFetch(
+    (call) => {
+      if (call.url.endsWith('/branches/main')) return { body: { name: 'main' } };
+      if (call.url.endsWith('/git/blobs')) return { status: 403, body: { message: 'Resource not accessible by personal access token' } };
+      return { body: REPO };
+    },
     async () => {
       const info = await client.checkAccess();
-      assert.deepEqual(info, { fullName: 'yaojiejia/myLeet', defaultBranch: 'main', branch: 'main', canPush: true, isPrivate: false });
+      assert.equal(info.canPush, false);
+      assert.match(info.pushError, /cannot write to yaojiejia\/myLeet/);
+      assert.match(info.pushError, /Read and write/);
+    },
+  ));
+
+test('a write rejected for token permissions explains the fix', () =>
+  withFetch(
+    (call) =>
+      call.method === 'GET'
+        ? { status: 404, body: { message: 'Not Found' } }
+        : { status: 403, body: { message: 'Resource not accessible by personal access token' } },
+    async () => {
+      await assert.rejects(client.upsertFile('a/b.py', 'x', 'm'), (err) => {
+        assert.equal(err.status, 403);
+        assert.match(err.message, /Resource not accessible by personal access token/);
+        assert.match(err.message, /Repository access/);
+        assert.match(err.message, /classic token needs the "repo" scope/);
+        return true;
+      });
     },
   ));

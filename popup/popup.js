@@ -76,6 +76,21 @@ function renderHistory(history) {
       err.className = 'error';
       err.textContent = entry.error;
       li.appendChild(err);
+      if (entry.payload) {
+        const retry = document.createElement('button');
+        retry.className = 'retry';
+        retry.textContent = 'Retry';
+        retry.addEventListener('click', async () => {
+          retry.disabled = true;
+          retry.textContent = 'Retrying…';
+          try {
+            await chrome.runtime.sendMessage({ type: 'RETRY_SYNC', payload: entry.payload });
+          } finally {
+            load();
+          }
+        });
+        li.appendChild(retry);
+      }
     }
     list.appendChild(li);
   }

@@ -63,7 +63,7 @@ $('test').addEventListener('click', async () => {
     const res = await chrome.runtime.sendMessage({ type: 'TEST_CONNECTION', settings });
     if (!res || !res.ok) throw new Error((res && res.error) || 'Unknown error');
     if (!res.canPush) {
-      setStatus(`Connected to ${res.fullName}, but this token cannot push. Give it Contents: Read and write.`, 'error');
+      setStatus(`Connected to ${res.fullName}, but this token cannot write to it. ${res.pushError || 'Give it Contents: Read and write.'}`, 'error');
     } else {
       setStatus(`Connected to ${res.fullName} (branch ${res.branch}). Push access OK.`, 'ok');
     }

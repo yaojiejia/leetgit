@@ -63,10 +63,28 @@ export class GitHubClient {
     }
 
     if (!res.ok) {
-      const detail = json?.message || `HTTP ${res.status}`;
+      const detail = this.explain(res.status, json?.message || `HTTP ${res.status}`, method);
       throw new GitHubError(`GitHub ${method} ${path} failed: ${detail}`, res.status, json);
     }
     return json;
+  }
+
+  /** Adds the fix to GitHub's terse error messages. */
+  explain(status, message, method) {
+    const target = `${this.owner}/${this.repo}`;
+    if (status === 401) {
+      return `${message}. The token is invalid or has expired; create a new one in the settings.`;
+    }
+    if (status === 403 && /not accessible by (personal access token|integration)/i.test(message)) {
+      return (
+        `${message}. The token cannot write to ${target}. For a fine-grained token, add this repository ` +
+        'under "Repository access" and set "Contents" to "Read and write". A classic token needs the "repo" scope.'
+      );
+    }
+    if (status === 404 && method !== 'GET') {
+      return `${message}. ${target} does not exist, or the token cannot see it.`;
+    }
+    return message;
   }
 
   static encodePath(path) {
@@ -113,18 +131,36 @@ export class GitHubClient {
     };
   }
 
-  /** Verifies the token can see the repo and the branch, and whether it can push. */
+  /**
+   * Verifies the token can see the repo and the branch, and that it can write.
+   * The repo's `permissions` field describes the user's rights, not the token's,
+   * so write access is probed by creating a dangling git blob: no commit, no
+   * visible change, and GitHub garbage-collects it.
+   */
   async checkAccess() {
     const repo = await this.request('GET', this.repoPath);
     const branch = await this.request(
       'GET',
       `${this.repoPath}/branches/${encodeURIComponent(this.branch)}`,
     );
+    let canPush = false;
+    let pushError = null;
+    try {
+      await this.request('POST', `${this.repoPath}/git/blobs`, {
+        content: 'LeetGit connection test',
+        encoding: 'utf-8',
+      });
+      canPush = true;
+    } catch (err) {
+      if (!(err instanceof GitHubError) || (err.status !== 403 && err.status !== 404)) throw err;
+      pushError = err.message;
+    }
     return {
       fullName: repo.full_name,
       defaultBranch: repo.default_branch,
       branch: branch.name,
-      canPush: Boolean(repo.permissions?.push),
+      canPush,
+      pushError,
       isPrivate: Boolean(repo.private),
     };
   }

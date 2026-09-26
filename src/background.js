@@ -27,8 +27,10 @@ function folderUrl(settings, folder) {
 
 async function appendHistory(entry) {
   const { history = [] } = await chrome.storage.local.get('history');
-  history.unshift(entry);
-  await chrome.storage.local.set({ history: history.slice(0, HISTORY_LIMIT) });
+  // A retry replaces the earlier entry for the same submission.
+  const rest = history.filter((h) => h.submissionId !== entry.submissionId);
+  rest.unshift(entry);
+  await chrome.storage.local.set({ history: rest.slice(0, HISTORY_LIMIT) });
 }
 
 async function markSynced(submissionId) {
@@ -90,7 +92,8 @@ async function syncSubmission(payload) {
     }
   } catch (err) {
     console.error('[LeetGit] sync failed', err);
-    await appendHistory({ ...base, status: 'error', error: err.message, results });
+    // Keep the payload so the popup can retry once the problem (usually the token) is fixed.
+    await appendHistory({ ...base, status: 'error', error: err.message, results, payload });
     flashBadge('!', '#b91c1c');
     return { ok: false, error: err.message, folder, results };
   }
@@ -111,7 +114,8 @@ async function testConnection(raw) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   switch (message && message.type) {
-    case 'SYNC_ACCEPTED': {
+    case 'SYNC_ACCEPTED':
+    case 'RETRY_SYNC': {
       const job = queue.then(() => syncSubmission(message.payload));
       queue = job.catch(() => {});
       job.then(sendResponse, (err) => sendResponse({ ok: false, error: err.message }));
