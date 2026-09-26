@@ -127,7 +127,39 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 });
 
+/**
+ * Content scripts declared in the manifest only run in pages loaded after the
+ * extension (re)loads. Inject into LeetCode tabs that are already open so an
+ * install, an update or a developer reload does not require refreshing them.
+ */
+async function injectIntoOpenTabs() {
+  let tabs = [];
+  try {
+    tabs = await chrome.tabs.query({ url: 'https://leetcode.com/*' });
+  } catch (err) {
+    console.warn('[LeetGit] cannot list LeetCode tabs', err);
+    return;
+  }
+  for (const tab of tabs) {
+    if (!tab.id || tab.discarded) continue;
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: 'MAIN',
+        files: ['src/injected.js'],
+      });
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['src/content.js'],
+      });
+    } catch (err) {
+      console.warn(`[LeetGit] could not inject into tab ${tab.id}`, err);
+    }
+  }
+}
+
 chrome.runtime.onInstalled.addListener(async (details) => {
+  await injectIntoOpenTabs();
   if (details.reason !== 'install') return;
   const settings = await getSettings();
   if (!isConfigured(settings)) chrome.runtime.openOptionsPage();

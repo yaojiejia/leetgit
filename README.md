@@ -51,7 +51,7 @@ The token is stored in the extension's local storage for this browser profile on
 - `src/background.js` (service worker) builds the file list with `src/format.js`, then uses the GitHub Contents API (`src/github.js`) to create or update each file with its own commit. Submissions are processed one at a time and each submission id is synced once.
 - The popup lists recent syncs with links to the folder on GitHub; failures show the error there and on the toolbar badge.
 
-Permissions: `storage` plus host access to `api.github.com` only. Calls to leetcode.com are made from the page itself, so no LeetCode host permission is needed.
+Permissions: `storage`, `scripting`, and host access to `api.github.com` and `leetcode.com`. The LeetCode host permission is used only to inject the scripts into LeetCode tabs that are already open when the extension is installed, updated or reloaded. Calls to LeetCode's API are made from the page itself with your existing login.
 
 ## Development
 
@@ -61,6 +61,12 @@ npm run check   # syntax-check every script
 ```
 
 No build step. Edit the files and click the reload icon on `chrome://extensions`.
+
+## Troubleshooting
+
+- **"LeetGit was reloaded or updated. Refresh this tab to resume syncing."** or an error mentioning `sendMessage` / `Extension context invalidated`: the extension was reloaded (for example after editing it, or after loading it again from a new folder) while this LeetCode tab was open, which cuts the tab's old script off from the extension. Since 1.0.1 the extension re-injects itself into open tabs automatically. If you still see it, refresh the tab and submit again.
+- **Nothing happens on Accepted:** check the popup for an error entry, and make sure the tab was opened (or refreshed) after the extension was installed.
+- A submission that failed to sync is not retried. Submit the problem again once the issue is fixed.
 
 ## Limitations
 

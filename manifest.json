@@ -1,25 +1,39 @@
 {
   "manifest_version": 3,
   "name": "LeetGit",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Commits every accepted LeetCode submission to your GitHub repository using the LeetSync folder layout.",
   "minimum_chrome_version": "111",
-  "permissions": ["storage"],
-  "host_permissions": ["https://api.github.com/*"],
+  "permissions": [
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://api.github.com/*",
+    "https://leetcode.com/*"
+  ],
   "background": {
     "service_worker": "src/background.js",
     "type": "module"
   },
   "content_scripts": [
     {
-      "matches": ["https://leetcode.com/*"],
-      "js": ["src/injected.js"],
+      "matches": [
+        "https://leetcode.com/*"
+      ],
+      "js": [
+        "src/injected.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
-      "matches": ["https://leetcode.com/*"],
-      "js": ["src/content.js"],
+      "matches": [
+        "https://leetcode.com/*"
+      ],
+      "js": [
+        "src/content.js"
+      ],
       "run_at": "document_start"
     }
   ],

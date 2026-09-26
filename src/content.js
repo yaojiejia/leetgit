@@ -8,9 +8,54 @@
  * - keeps a per-tab timer per problem for the optional Notes.md "Time taken"
  */
 (() => {
+  if (window.__leetgitContent) return;
+  window.__leetgitContent = true;
+
   const SOURCE = 'leetgit';
   const PROBLEM_RE = /^\/problems\/([^/?#]+)/;
+  const RELOADED_MESSAGE = 'LeetGit was reloaded or updated. Refresh this tab to resume syncing.';
   const handled = new Set();
+
+  // ---- orphan detection ------------------------------------------------------
+  // When the extension is reloaded or updated, Chrome cuts this copy of the
+  // script off from the extension (chrome.runtime disappears) and the service
+  // worker injects a fresh copy. Each copy writes its own token on <html>; an
+  // orphan that sees a foreign token knows a newer copy is handling events.
+  const INSTANCE = Math.random().toString(36).slice(2);
+  function claimPage() {
+    try {
+      if (document.documentElement) document.documentElement.dataset.leetgit = INSTANCE;
+    } catch {
+      /* ignore */
+    }
+  }
+  claimPage();
+  if (!document.documentElement) {
+    document.addEventListener('DOMContentLoaded', claimPage, { once: true });
+  }
+
+  function extensionAlive() {
+    try {
+      return typeof chrome !== 'undefined' && Boolean(chrome.runtime && chrome.runtime.id);
+    } catch {
+      return false;
+    }
+  }
+
+  function newerCopyPresent() {
+    try {
+      return document.documentElement.dataset.leetgit !== INSTANCE;
+    } catch {
+      return false;
+    }
+  }
+
+  function friendlyError(message) {
+    if (/context invalidated|receiving end does not exist|message port closed/i.test(message || '')) {
+      return RELOADED_MESSAGE;
+    }
+    return message;
+  }
 
   // ---- problem timer (for Notes.md) ---------------------------------------
   function currentSlug() {
@@ -185,14 +230,18 @@
 
   function sendToBackground(message) {
     return new Promise((resolve, reject) => {
+      if (!extensionAlive()) {
+        reject(new Error(RELOADED_MESSAGE));
+        return;
+      }
       try {
         chrome.runtime.sendMessage(message, (response) => {
           const err = chrome.runtime.lastError;
-          if (err) reject(new Error(err.message));
+          if (err) reject(new Error(friendlyError(err.message)));
           else resolve(response);
         });
       } catch (err) {
-        reject(err);
+        reject(new Error(friendlyError(err.message)));
       }
     });
   }
@@ -201,6 +250,13 @@
   async function onAccepted({ submissionId, result, submit }) {
     if (!submissionId || handled.has(submissionId)) return;
     handled.add(submissionId);
+
+    if (!extensionAlive()) {
+      // Orphaned by an extension reload. If a fresh copy is on the page it
+      // handles this event; otherwise ask for a refresh.
+      if (!newerCopyPresent()) toast(RELOADED_MESSAGE, 'warn', { ms: 12000 });
+      return;
+    }
 
     const settings = await getSettings();
     if (settings.enabled === false) return;
