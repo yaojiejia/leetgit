@@ -1,11 +1,20 @@
 /**
  * Content script (isolated world) for leetcode.com.
  *
- * - receives "accepted" events from injected.js (page world)
- * - fills in anything missing via LeetCode's GraphQL API (same-origin, uses the login cookie)
- * - hands the finished submission to the service worker, which commits it to GitHub
- * - shows a small toast with the outcome
- * - keeps a per-tab timer per problem for the optional Notes.md "Time taken"
+ * Two independent ways to notice an accepted submission:
+ *
+ *  1. injected.js (page world) intercepts LeetCode's /submit/ and /check/
+ *     traffic and reports an "accepted" event through window.postMessage.
+ *  2. After a submission, LeetCode navigates to /problems/{slug}/submissions/{id}/.
+ *     We watch the URL, then poll LeetCode's GraphQL `submissionDetails` until
+ *     the verdict is in. This path does not depend on LeetCode's internal
+ *     endpoints, so it keeps working when those change.
+ *
+ * Both paths converge on onAccepted(), which fills in anything missing via
+ * GraphQL (using your existing LeetCode login), hands the submission to the
+ * service worker, and shows a toast with the outcome.
+ *
+ * Open the DevTools console on a LeetCode tab to see "[LeetGit]" log lines.
  */
 (() => {
   if (window.__leetgitContent) return;
@@ -13,8 +22,25 @@
 
   const SOURCE = 'leetgit';
   const PROBLEM_RE = /^\/problems\/([^/?#]+)/;
+  const SUBMISSION_URL_RE = /^\/problems\/([^/?#]+)\/submissions\/(\d+)\/?/;
   const RELOADED_MESSAGE = 'LeetGit was reloaded or updated. Refresh this tab to resume syncing.';
+  const RECENT_WINDOW_S = 10 * 60; // older submissions in the URL are history browsing, not new solves
+  const POLL_INTERVAL_MS = 1500;
+  const POLL_MAX_MS = 60 * 1000;
+  // LeetCode verdict codes. Anything else means "still judging".
+  const FINAL_STATUS_CODES = new Set([10, 11, 12, 13, 14, 15, 16, 20, 21, 30]);
+  const ACCEPTED_STATUS_CODE = 10;
+
   const handled = new Set();
+  const log = (...args) => console.info('[LeetGit]', ...args);
+
+  let version = '';
+  try {
+    version = chrome.runtime.getManifest().version;
+  } catch {
+    /* ignore */
+  }
+  log(`content script ${version} loaded on ${location.pathname}`);
 
   // ---- orphan detection ------------------------------------------------------
   // When the extension is reloaded or updated, Chrome cuts this copy of the
@@ -87,15 +113,6 @@
       return null;
     }
   }
-
-  markOpened();
-  let lastPath = location.pathname;
-  setInterval(() => {
-    if (location.pathname !== lastPath) {
-      lastPath = location.pathname;
-      markOpened();
-    }
-  }, 1000);
 
   // ---- toast ---------------------------------------------------------------
   const TOAST_COLORS = { info: '#1f2937', ok: '#15803d', warn: '#b45309', error: '#b91c1c' };
@@ -185,6 +202,8 @@
       `query submissionDetails($submissionId: Int!) {
         submissionDetails(submissionId: $submissionId) {
           code
+          statusCode
+          timestamp
           runtimeDisplay
           runtimePercentile
           memoryDisplay
@@ -200,6 +219,7 @@
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  /** Percentiles can lag the verdict by a moment; retry a few times for them. */
   async function fetchSubmissionDetailsWithRetry(submissionId) {
     let last = null;
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -207,6 +227,7 @@
       try {
         last = await fetchSubmissionDetails(submissionId);
       } catch (err) {
+        log('submissionDetails failed', err.message);
         last = null;
         if (attempt === 2) throw err;
         continue;
@@ -247,7 +268,13 @@
   }
 
   // ---- main flow ----------------------------------------------------------------
-  async function onAccepted({ submissionId, result, submit }) {
+  /**
+   * submission = { submissionId, slug?, lang?, code?, runtime?, memory?,
+   *                runtimePercentile?, memoryPercentile?, details? }
+   * Anything missing is fetched from LeetCode.
+   */
+  async function onAccepted(submission) {
+    const submissionId = String(submission.submissionId || '');
     if (!submissionId || handled.has(submissionId)) return;
     handled.add(submissionId);
 
@@ -259,36 +286,36 @@
     }
 
     const settings = await getSettings();
-    if (settings.enabled === false) return;
+    if (settings.enabled === false) {
+      log('sync is paused, ignoring submission', submissionId);
+      return;
+    }
     if (!settings.token || !settings.owner || !settings.repo) {
       toast('LeetGit is not configured. Click the extension icon to set it up.', 'warn');
       return;
     }
 
+    log('accepted submission', submissionId, 'syncing');
     toast('Accepted! Syncing to GitHub…', 'info', { ms: 20000 });
 
     try {
-      let slug = submit && submit.slug;
-      let code = submit && submit.code;
-      let lang = (submit && submit.lang) || result.lang;
-      let runtime = result.status_runtime;
-      let memory = result.status_memory;
-      let runtimePercentile = result.runtime_percentile;
-      let memoryPercentile = result.memory_percentile;
+      let { slug, code, lang, runtime, memory, runtimePercentile, memoryPercentile, details } =
+        submission;
 
-      const needDetails =
-        !code || !slug || runtimePercentile == null || memoryPercentile == null;
-      if (needDetails) {
-        const details = await fetchSubmissionDetailsWithRetry(submissionId);
-        if (details) {
-          code = code || details.code;
-          lang = lang || (details.lang && details.lang.name);
-          slug = slug || (details.question && details.question.titleSlug);
-          runtime = runtime || details.runtimeDisplay;
-          memory = memory || details.memoryDisplay;
-          if (runtimePercentile == null) runtimePercentile = details.runtimePercentile;
-          if (memoryPercentile == null) memoryPercentile = details.memoryPercentile;
-        }
+      const fill = (d) => {
+        if (!d) return;
+        code = code || d.code;
+        lang = lang || (d.lang && d.lang.name);
+        slug = slug || (d.question && d.question.titleSlug);
+        runtime = runtime || d.runtimeDisplay;
+        memory = memory || d.memoryDisplay;
+        if (runtimePercentile == null) runtimePercentile = d.runtimePercentile;
+        if (memoryPercentile == null) memoryPercentile = d.memoryPercentile;
+      };
+      fill(details);
+
+      if (!code || !slug || !lang || runtimePercentile == null || memoryPercentile == null) {
+        fill(await fetchSubmissionDetailsWithRetry(submissionId));
       }
       slug = slug || currentSlug();
       if (!slug) throw new Error('Could not determine which problem was submitted');
@@ -296,7 +323,7 @@
 
       const question = await fetchQuestion(slug);
       const payload = {
-        submissionId: String(submissionId),
+        submissionId,
         question,
         lang,
         code,
@@ -308,9 +335,10 @@
       };
 
       const response = await sendToBackground({ type: 'SYNC_ACCEPTED', payload });
+      log('sync result', response);
       if (!response) throw new Error('No response from the extension');
       if (response.ok && response.skipped) {
-        toast('Already synced this submission.', 'info');
+        // Already synced earlier (e.g. the page was reloaded); nothing to say.
       } else if (response.ok) {
         const changed = (response.results || []).filter((r) => r.action !== 'unchanged').length;
         const msg = changed
@@ -323,16 +351,94 @@
         throw new Error(response.error || 'Unknown error');
       }
     } catch (err) {
+      log('sync failed', err);
       toast(`GitHub sync failed: ${err.message}`, 'error', { ms: 12000 });
-      // Allow a retry if LeetCode re-emits the result (e.g. after a re-submit).
+      // Allow a retry if the result is reported again (e.g. after a re-submit).
       handled.delete(submissionId);
     }
   }
 
+  // ---- path 1: events from injected.js ---------------------------------------
   window.addEventListener('message', (event) => {
     if (event.source !== window) return;
     const data = event.data;
-    if (!data || data.source !== SOURCE) return;
-    if (data.type === 'accepted') onAccepted(data.payload || {});
+    if (!data || data.source !== SOURCE || data.type !== 'accepted') return;
+    const { submissionId, result = {}, submit } = data.payload || {};
+    log('accepted via network interception', submissionId);
+    onAccepted({
+      submissionId,
+      slug: submit && submit.slug,
+      code: submit && submit.code,
+      lang: (submit && submit.lang) || result.lang,
+      runtime: result.status_runtime,
+      memory: result.status_memory,
+      runtimePercentile: result.runtime_percentile,
+      memoryPercentile: result.memory_percentile,
+    });
   });
+
+  // ---- path 2: submission id in the URL ------------------------------------------
+  const seenSubmissionUrls = new Set();
+
+  async function watchSubmission(slug, submissionId) {
+    const deadline = Date.now() + POLL_MAX_MS;
+    let details = null;
+    while (Date.now() < deadline) {
+      if (handled.has(submissionId)) return; // path 1 got there first
+      try {
+        details = await fetchSubmissionDetails(submissionId);
+      } catch (err) {
+        log('submissionDetails failed', err.message);
+        details = null;
+      }
+      if (details && FINAL_STATUS_CODES.has(Number(details.statusCode))) break;
+      await sleep(POLL_INTERVAL_MS);
+    }
+    if (!details || !FINAL_STATUS_CODES.has(Number(details.statusCode))) {
+      log('gave up waiting for a verdict on submission', submissionId);
+      return;
+    }
+    if (Number(details.statusCode) !== ACCEPTED_STATUS_CODE) {
+      log('submission', submissionId, 'not accepted (status', details.statusCode + ')');
+      return;
+    }
+    const ageS = details.timestamp ? Date.now() / 1000 - Number(details.timestamp) : 0;
+    if (ageS > RECENT_WINDOW_S) {
+      log('submission', submissionId, 'is old history, ignoring');
+      return;
+    }
+    log('accepted via submission URL', submissionId);
+    onAccepted({
+      submissionId,
+      slug: (details.question && details.question.titleSlug) || slug,
+      details,
+    });
+  }
+
+  let lastPath = null;
+  function checkUrl() {
+    const path = location.pathname;
+    if (path !== lastPath) {
+      lastPath = path;
+      markOpened();
+    }
+    const m = path.match(SUBMISSION_URL_RE);
+    if (!m) return;
+    const [, slug, submissionId] = m;
+    if (seenSubmissionUrls.has(submissionId)) return;
+    seenSubmissionUrls.add(submissionId);
+    log('submission URL detected', submissionId);
+    watchSubmission(slug, submissionId);
+  }
+
+  checkUrl();
+  setInterval(checkUrl, 1000);
+  window.addEventListener('popstate', () => setTimeout(checkUrl, 0));
+  try {
+    if (window.navigation) {
+      window.navigation.addEventListener('navigatesuccess', () => setTimeout(checkUrl, 0));
+    }
+  } catch {
+    /* navigation API unavailable */
+  }
 })();

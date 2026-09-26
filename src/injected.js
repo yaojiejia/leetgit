@@ -18,6 +18,8 @@
 
   const pendingSubmits = new Map(); // submissionId -> { slug, lang, questionId, code }
   const reported = new Set();
+  const log = (...args) => console.info('[LeetGit]', ...args);
+  log('page script loaded: watching fetch/XHR for LeetCode submissions');
 
   function emit(type, payload) {
     try {
@@ -43,6 +45,7 @@
       questionId: body && body.question_id,
       code: body && body.typed_code,
     });
+    log('submit seen', { submissionId: String(id), slug: match[1], hasCode: Boolean(body && body.typed_code) });
     while (pendingSubmits.size > 20) {
       pendingSubmits.delete(pendingSubmits.keys().next().value);
     }
@@ -50,8 +53,10 @@
 
   function handleCheck(url, json) {
     const match = String(url).match(CHECK_RE);
-    if (!match || !json || json.state !== 'SUCCESS') return;
+    if (!match || !json) return;
     const id = match[1];
+    log('check seen', { submissionId: id, state: json.state, status: json.status_msg });
+    if (json.state !== 'SUCCESS') return;
     const accepted = json.status_msg === 'Accepted' || json.status_code === 10;
     if (!accepted || reported.has(id)) return;
     reported.add(id);

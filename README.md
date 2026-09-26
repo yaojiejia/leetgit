@@ -47,7 +47,8 @@ The token is stored in the extension's local storage for this browser profile on
 ## How it works
 
 - `src/injected.js` runs in the page's main world and wraps `fetch`/`XMLHttpRequest`. It sees the `POST /problems/{slug}/submit/` request (remembering the submitted code) and the `GET /submissions/detail/{id}/check/` polling response. When that response says `Accepted`, it posts an event to the content script.
-- `src/content.js` (isolated world) fills in anything missing through LeetCode's GraphQL API using your existing login session: problem title, difficulty, description, internal id, and, if needed, the code and percentiles for the submission. It then messages the service worker and shows a toast on the page with the result.
+- `src/content.js` (isolated world) also watches the URL: after a submission LeetCode navigates to `/problems/{slug}/submissions/{id}/`, and the script polls LeetCode's GraphQL `submissionDetails` for that id until the verdict is in. This second path does not depend on LeetCode's internal endpoints. Old submissions opened from the history list are ignored (anything older than ten minutes).
+- Either path then fills in anything missing through LeetCode's GraphQL API using your existing login session: problem title, difficulty, description, internal id, and, if needed, the code and percentiles for the submission. It then messages the service worker and shows a toast on the page with the result.
 - `src/background.js` (service worker) builds the file list with `src/format.js`, then uses the GitHub Contents API (`src/github.js`) to create or update each file with its own commit. Submissions are processed one at a time and each submission id is synced once.
 - The popup lists recent syncs with links to the folder on GitHub; failures show the error there and on the toolbar badge.
 
@@ -65,6 +66,7 @@ No build step. Edit the files and click the reload icon on `chrome://extensions`
 ## Troubleshooting
 
 - **"LeetGit was reloaded or updated. Refresh this tab to resume syncing."** or an error mentioning `sendMessage` / `Extension context invalidated`: the extension was reloaded (for example after editing it, or after loading it again from a new folder) while this LeetCode tab was open, which cuts the tab's old script off from the extension. Since 1.0.1 the extension re-injects itself into open tabs automatically. If you still see it, refresh the tab and submit again.
+- **Seeing what the extension does:** open DevTools on the LeetCode tab (F12 → Console) and filter for `[LeetGit]`. You should see a "content script … loaded" line on page load, then "submission URL detected", "accepted via …" and "sync result" lines after a submission.
 - **Nothing happens on Accepted:** check the popup for an error entry, and make sure the tab was opened (or refreshed) after the extension was installed.
 - A submission that failed to sync is not retried. Submit the problem again once the issue is fixed.
 

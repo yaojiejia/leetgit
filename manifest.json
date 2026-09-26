@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LeetGit",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Commits every accepted LeetCode submission to your GitHub repository using the LeetSync folder layout.",
   "minimum_chrome_version": "111",
   "permissions": [
