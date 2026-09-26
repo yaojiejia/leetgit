@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LeetGit – Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <header class="page-header">
+      <img src="../icons/icon48.png" alt="" width="40" height="40">
+      <div>
+        <h1>LeetGit</h1>
+        <p class="lead">Every accepted submission on leetcode.com is committed to the repository below in the LeetSync layout:
+          <code>{id}-{slug}/README.md</code> and <code>{id}-{slug}/{slug}.{ext}</code>.</p>
+      </div>
+    </header>
+
+    <form id="form" autocomplete="off">
+      <section>
+        <h2>GitHub</h2>
+
+        <label for="token">Personal access token</label>
+        <div class="row">
+          <input type="password" id="token" spellcheck="false" required>
+          <button type="button" id="toggleToken" class="ghost">Show</button>
+        </div>
+        <p class="hint">
+          Create a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a>
+          that can access only this repository with <strong>Contents: Read and write</strong>.
+          A classic token with the <code>repo</code> scope also works.
+          The token is kept in this browser profile's local extension storage and is only ever sent to <code>api.github.com</code>.
+        </p>
+
+        <label for="repo">Repository</label>
+        <input id="repo" placeholder="owner/repo  or  https://github.com/owner/repo" spellcheck="false" required>
+
+        <label for="branch">Branch</label>
+        <input id="branch" value="main" spellcheck="false" required>
+      </section>
+
+      <section>
+        <h2>Commit format</h2>
+
+        <label for="commitSuffix">Commit message suffix</label>
+        <input id="commitSuffix" value="LeetSync" spellcheck="false">
+        <p class="hint">Solution commits look like
+          <code>Time: 95 ms (5.15%) | Memory: 29.3 MB (7.53%) - LeetSync</code>.
+          Keep <code>LeetSync</code> to match the existing history, or leave it empty to drop the suffix.</p>
+
+        <fieldset>
+          <legend>Folder number</legend>
+          <label class="choice">
+            <input type="radio" name="folderIdMode" value="questionId" checked>
+            <span>Internal question id — matches the existing LeetSync folders, e.g. <code>1013-fibonacci-number</code></span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="folderIdMode" value="frontendId">
+            <span>Problem number shown on LeetCode, e.g. <code>509-fibonacci-number</code></span>
+          </label>
+        </fieldset>
+
+        <label class="choice">
+          <input type="checkbox" id="notesEnabled">
+          <span>Also write <code>Notes.md</code> with the time taken, measured from opening the problem in this tab until it is accepted</span>
+        </label>
+
+        <label class="choice">
+          <input type="checkbox" id="enabled" checked>
+          <span>Sync enabled</span>
+        </label>
+      </section>
+
+      <div class="actions">
+        <button type="submit" class="primary">Save</button>
+        <button type="button" id="test">Test connection</button>
+        <span id="status" role="status" aria-live="polite"></span>
+      </div>
+    </form>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

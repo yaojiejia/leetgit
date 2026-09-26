@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>LeetGit</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="../icons/icon32.png" alt="" width="24" height="24">
+    <h1>LeetGit</h1>
+    <label class="switch" title="Enable or pause syncing">
+      <input type="checkbox" id="enabled">
+      <span class="slider"></span>
+    </label>
+  </header>
+
+  <section id="target" class="target"></section>
+
+  <section>
+    <h2>Recent syncs</h2>
+    <ul id="history" class="history"></ul>
+    <p id="empty" class="muted" hidden>Nothing synced yet. Solve a problem on leetcode.com and it will show up here.</p>
+  </section>
+
+  <footer>
+    <button id="openOptions" class="primary">Settings</button>
+    <button id="clearHistory" class="ghost">Clear list</button>
+  </footer>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
