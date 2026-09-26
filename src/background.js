@@ -7,6 +7,20 @@ import { GitHubClient } from './github.js';
 
 const HISTORY_LIMIT = 50;
 const SYNCED_LIMIT = 500;
+const DIAG_LIMIT = 300;
+
+// Diagnostic log kept in storage for the popup's "Copy diagnostics" button.
+let diagQueue = Promise.resolve();
+function dlog(src, line) {
+  console.info('[LeetGit]', line);
+  diagQueue = diagQueue
+    .then(async () => {
+      const { diagnostics = [] } = await chrome.storage.local.get('diagnostics');
+      diagnostics.push({ t: Date.now(), src, line });
+      await chrome.storage.local.set({ diagnostics: diagnostics.slice(-DIAG_LIMIT) });
+    })
+    .catch(() => {});
+}
 
 // Submissions are processed strictly one after another so two quick accepts
 // never race on the same README's sha.
@@ -59,15 +73,23 @@ function flashBadge(text, color) {
 }
 
 async function syncSubmission(payload) {
+  const submissionId = String(payload && payload.submissionId);
+  const slug = payload && payload.question && payload.question.titleSlug;
+  dlog('worker', `received submission ${submissionId} for ${slug} (${payload && payload.lang})`);
+
   const settings = await getSettings();
-  if (!settings.enabled) return { ok: false, skipped: true, reason: 'disabled' };
+  if (!settings.enabled) {
+    dlog('worker', 'sync is paused, skipping');
+    return { ok: false, skipped: true, reason: 'disabled' };
+  }
   if (!isConfigured(settings)) {
+    dlog('worker', 'not configured, skipping');
     return { ok: false, reason: 'not_configured', error: 'Extension is not configured' };
   }
 
-  const submissionId = String(payload.submissionId);
   const { syncedSubmissions = {} } = await chrome.storage.local.get('syncedSubmissions');
   if (syncedSubmissions[submissionId]) {
+    dlog('worker', `submission ${submissionId} was already synced, skipping`);
     return { ok: true, skipped: true, reason: 'already_synced' };
   }
 
@@ -88,10 +110,13 @@ async function syncSubmission(payload) {
   const results = [];
   try {
     for (const file of files) {
-      results.push(await client.upsertFile(file.path, file.content, file.message));
+      const result = await client.upsertFile(file.path, file.content, file.message);
+      dlog('worker', `${result.action}: ${file.path}`);
+      results.push(result);
     }
   } catch (err) {
     console.error('[LeetGit] sync failed', err);
+    dlog('worker', `sync failed: ${err.message}`);
     // Keep the payload so the popup can retry once the problem (usually the token) is fixed.
     await appendHistory({ ...base, status: 'error', error: err.message, results, payload });
     flashBadge('!', '#b91c1c');
@@ -100,6 +125,7 @@ async function syncSubmission(payload) {
 
   await markSynced(submissionId);
   await appendHistory({ ...base, status: 'ok', results });
+  dlog('worker', `synced ${folder}`);
   flashBadge('✓', '#15803d');
   return { ok: true, folder, url: base.url, results };
 }
@@ -126,6 +152,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ ok: false, error: err.message }),
       );
       return true;
+    case 'LOG':
+      dlog('page', String(message.line || ''));
+      return false;
     default:
       return false;
   }
@@ -163,6 +192,7 @@ async function injectIntoOpenTabs() {
 }
 
 chrome.runtime.onInstalled.addListener(async (details) => {
+  dlog('worker', `extension ${details.reason}, version ${chrome.runtime.getManifest().version}`);
   await injectIntoOpenTabs();
   if (details.reason !== 'install') return;
   const settings = await getSettings();

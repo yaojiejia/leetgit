@@ -20,6 +20,8 @@ export function base64ToUtf8(b64) {
   return new TextDecoder().decode(bytes);
 }
 
+const REQUEST_TIMEOUT_MS = 30 * 1000;
+
 export class GitHubError extends Error {
   constructor(message, status, body) {
     super(message);
@@ -49,11 +51,25 @@ export class GitHubClient {
     };
     if (body) headers['Content-Type'] = 'application/json';
 
-    const res = await fetch(`https://api.github.com${path}`, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    let res;
+    try {
+      res = await fetch(`https://api.github.com${path}`, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      const reason =
+        err && err.name === 'AbortError'
+          ? `no response after ${REQUEST_TIMEOUT_MS / 1000} s`
+          : (err && err.message) || 'network error';
+      throw new GitHubError(`GitHub ${method} ${path} failed: ${reason}`, 0, null);
+    } finally {
+      clearTimeout(timer);
+    }
 
     let json = null;
     try {

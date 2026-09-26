@@ -48,7 +48,7 @@ section { padding: 10px 14px; }
 .history .retry { margin-top: 6px; padding: 4px 10px; font-size: 12px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }
 .dot.error { background: var(--error); }
-footer { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); }
+footer { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); flex-wrap: wrap; }
 button {
   padding: 6px 12px;
   border-radius: 6px;

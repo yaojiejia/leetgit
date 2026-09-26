@@ -24,7 +24,7 @@
   const PROBLEM_RE = /^\/problems\/([^/?#]+)/;
   const SUBMISSION_URL_RE = /^\/problems\/([^/?#]+)\/submissions\/(\d+)\/?/;
   const RELOADED_MESSAGE = 'LeetGit was reloaded or updated. Refresh this tab to resume syncing.';
-  const RECENT_WINDOW_S = 10 * 60; // older submissions in the URL are history browsing, not new solves
+  const RECENT_WINDOW_S = 30 * 60; // older submissions in the URL are history browsing, not new solves
   const POLL_INTERVAL_MS = 1500;
   const POLL_MAX_MS = 60 * 1000;
   // LeetCode verdict codes. Anything else means "still judging".
@@ -32,7 +32,32 @@
   const ACCEPTED_STATUS_CODE = 10;
 
   const handled = new Set();
-  const log = (...args) => console.info('[LeetGit]', ...args);
+
+  function describe(value) {
+    if (typeof value === 'string') return value;
+    if (value instanceof Error) return value.message;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+
+  // Logs go to the page console and to the service worker, which keeps the
+  // last few hundred lines for the popup's "Copy diagnostics" button.
+  const log = (...args) => {
+    console.info('[LeetGit]', ...args);
+    try {
+      if (extensionAlive()) {
+        chrome.runtime.sendMessage(
+          { type: 'LOG', line: `${location.pathname} ${args.map(describe).join(' ')}` },
+          () => void chrome.runtime.lastError,
+        );
+      }
+    } catch {
+      /* ignore */
+    }
+  };
 
   let version = '';
   try {
@@ -164,6 +189,11 @@
     return m ? decodeURIComponent(m[1]) : '';
   }
 
+  // LeetCode's clock, derived from its Date response header, so the "recent
+  // submission" check does not depend on this computer's clock being right.
+  let serverOffsetMs = 0;
+  const serverNowS = () => (Date.now() + serverOffsetMs) / 1000;
+
   async function graphql(query, variables) {
     const res = await fetch('https://leetcode.com/graphql/', {
       method: 'POST',
@@ -171,6 +201,12 @@
       headers: { 'Content-Type': 'application/json', 'x-csrftoken': getCookie('csrftoken') },
       body: JSON.stringify({ query, variables }),
     });
+    try {
+      const serverTime = Date.parse(res.headers.get('date') || '');
+      if (!Number.isNaN(serverTime)) serverOffsetMs = serverTime - Date.now();
+    } catch {
+      /* ignore */
+    }
     if (!res.ok) throw new Error(`LeetCode API responded with HTTP ${res.status}`);
     const json = await res.json();
     if (json.errors && json.errors.length) {
@@ -291,6 +327,7 @@
       return;
     }
     if (!settings.token || !settings.owner || !settings.repo) {
+      log('not configured, ignoring submission', submissionId);
       toast('LeetGit is not configured. Click the extension icon to set it up.', 'warn');
       return;
     }
@@ -335,7 +372,7 @@
       };
 
       const response = await sendToBackground({ type: 'SYNC_ACCEPTED', payload });
-      log('sync result', response);
+      log('sync result', response && { ok: response.ok, skipped: response.skipped, reason: response.reason, error: response.error, folder: response.folder });
       if (!response) throw new Error('No response from the extension');
       if (response.ok && response.skipped) {
         // Already synced earlier (e.g. the page was reloaded); nothing to say.
@@ -402,9 +439,9 @@
       log('submission', submissionId, 'not accepted (status', details.statusCode + ')');
       return;
     }
-    const ageS = details.timestamp ? Date.now() / 1000 - Number(details.timestamp) : 0;
+    const ageS = details.timestamp ? serverNowS() - Number(details.timestamp) : 0;
     if (ageS > RECENT_WINDOW_S) {
-      log('submission', submissionId, 'is old history, ignoring');
+      log('submission', submissionId, `is ${Math.round(ageS / 60)} min old history, ignoring`);
       return;
     }
     log('accepted via submission URL', submissionId);

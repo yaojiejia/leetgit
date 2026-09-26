@@ -67,6 +67,10 @@ function bootPage({ pathname = '/problems/two-sum/', submissionDetails = () => A
       lastError: null,
       getManifest: () => ({ version: 'test' }),
       sendMessage(msg, cb) {
+        if (msg.type === 'LOG') {
+          if (cb) cb();
+          return;
+        }
         sent.push(msg);
         cb({ ok: true, folder: '1-two-sum', url: 'https://github.com/o/r/tree/main/1-two-sum', results: [] });
       },

@@ -114,8 +114,33 @@ $('enabled').addEventListener('change', async (event) => {
 $('openOptions').addEventListener('click', () => chrome.runtime.openOptionsPage());
 
 $('clearHistory').addEventListener('click', async () => {
-  await chrome.storage.local.set({ history: [] });
+  await chrome.storage.local.set({ history: [], diagnostics: [] });
   renderHistory([]);
+});
+
+$('copyDiag').addEventListener('click', async () => {
+  const button = $('copyDiag');
+  const { settings, history = [], diagnostics = [] } = await chrome.storage.local.get([
+    'settings',
+    'history',
+    'diagnostics',
+  ]);
+  const s = { ...DEFAULT_SETTINGS, ...(settings || {}) };
+  const report = {
+    version: chrome.runtime.getManifest().version,
+    settings: { ...s, token: s.token ? `set (${s.token.length} chars)` : 'missing' },
+    history: history.map(({ payload, ...rest }) => rest),
+    log: diagnostics.map((d) => `${new Date(d.t).toISOString()} [${d.src}] ${d.line}`),
+  };
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+    button.textContent = 'Copied';
+  } catch {
+    button.textContent = 'Copy failed';
+  }
+  setTimeout(() => {
+    button.textContent = 'Copy diagnostics';
+  }, 2000);
 });
 
 load();
