@@ -278,3 +278,13 @@ test('submit path: an old top submission is not mistaken for a new one', async (
   assert.ok(await waitFor(() => page.sent.length === 1, 200));
   assert.notEqual(page.sent[0].payload.submissionId, '100');
 });
+
+test('URL path: status 16 means still judging, not a verdict', async () => {
+  let calls = 0;
+  const page = bootPage({
+    submissionDetails: () => (++calls < 3 ? { ...ACCEPTED_DETAILS, statusCode: 16 } : ACCEPTED_DETAILS),
+  });
+  page.navigate('/problems/two-sum/submissions/559/');
+  assert.ok(await waitFor(() => page.sent.length === 1, 200), 'expected the accepted verdict to be synced');
+  assert.ok(calls >= 3);
+});

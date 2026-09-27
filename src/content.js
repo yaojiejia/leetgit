@@ -36,8 +36,10 @@
   const LATEST_FAST_POLLS = 20; // poll the submission list every 2 s for 40 s, then every 5 s
   const LATEST_SLOW_INTERVAL_MS = 5000;
   const SUBMIT_BUTTON_SELECTOR = '[data-e2e-locator="console-submit-button"], [data-cy="submit-code-btn"]';
-  // LeetCode verdict codes. Anything else means "still judging".
-  const FINAL_STATUS_CODES = new Set([10, 11, 12, 13, 14, 15, 16, 20, 21, 30]);
+  // LeetCode verdict codes. Anything else means "still judging". In particular
+  // submissionDetails reports statusCode 16 while a submission is in the queue,
+  // so 16 must not be treated as a verdict.
+  const FINAL_STATUS_CODES = new Set([10, 11, 12, 13, 14, 15, 20, 21, 30]);
   const ACCEPTED_STATUS_CODE = 10;
 
   const handled = new Set();
@@ -442,7 +444,7 @@
   async function watchSubmission(slug, submissionId) {
     const deadline = Date.now() + POLL_MAX_MS;
     let details = null;
-    while (Date.now() < deadline) {
+    for (let i = 0; Date.now() < deadline; i++) {
       if (handled.has(submissionId)) return; // path 1 got there first
       try {
         details = await fetchSubmissionDetails(submissionId);
@@ -451,7 +453,8 @@
         details = null;
       }
       if (details && FINAL_STATUS_CODES.has(Number(details.statusCode))) break;
-      await sleep(POLL_INTERVAL_MS);
+      if (i === 0) log('submission', submissionId, 'still judging, waiting', details && `(status ${details.statusCode})`);
+      await sleep(i < LATEST_FAST_POLLS ? POLL_INTERVAL_MS : LATEST_SLOW_INTERVAL_MS);
     }
     if (!details || !FINAL_STATUS_CODES.has(Number(details.statusCode))) {
       log('gave up waiting for a verdict on submission', submissionId);
