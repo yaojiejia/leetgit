@@ -1,6 +1,6 @@
 {
   "name": "leetgit",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "description": "Chrome extension that commits accepted LeetCode submissions to GitHub in the LeetSync layout.",
   "type": "module",

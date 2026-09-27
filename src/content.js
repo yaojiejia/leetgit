@@ -9,24 +9,33 @@
  *     We watch the URL, then poll LeetCode's GraphQL `submissionDetails` until
  *     the verdict is in. This path does not depend on LeetCode's internal
  *     endpoints, so it keeps working when those change.
+ *  3. When the Submit button is clicked (or Ctrl/Cmd+Enter is pressed), we ask
+ *     LeetCode's GraphQL for the newest submission on the current problem and
+ *     follow it as in path 2. This covers layouts where the URL does not change.
  *
- * Both paths converge on onAccepted(), which fills in anything missing via
+ * All paths converge on onAccepted(), which fills in anything missing via
  * GraphQL (using your existing LeetCode login), hands the submission to the
  * service worker, and shows a toast with the outcome.
  *
  * Open the DevTools console on a LeetCode tab to see "[LeetGit]" log lines.
  */
 (() => {
-  if (window.__leetgitContent) return;
-  window.__leetgitContent = true;
+  // If a copy from before an extension reload is still alive in this world,
+  // leave it be. If it is orphaned (its chrome.runtime is gone), take over.
+  const previous = window.__leetgitContent;
+  if (previous && typeof previous.alive === 'function' && previous.alive()) return;
+  window.__leetgitContent = { alive: () => extensionAlive() };
 
   const SOURCE = 'leetgit';
   const PROBLEM_RE = /^\/problems\/([^/?#]+)/;
   const SUBMISSION_URL_RE = /^\/problems\/([^/?#]+)\/submissions\/(\d+)\/?/;
   const RELOADED_MESSAGE = 'LeetGit was reloaded or updated. Refresh this tab to resume syncing.';
   const RECENT_WINDOW_S = 30 * 60; // older submissions in the URL are history browsing, not new solves
-  const POLL_INTERVAL_MS = 1500;
-  const POLL_MAX_MS = 60 * 1000;
+  const POLL_INTERVAL_MS = 2000;
+  const POLL_MAX_MS = 5 * 60 * 1000; // judging can queue for minutes at busy times
+  const LATEST_FAST_POLLS = 20; // poll the submission list every 2 s for 40 s, then every 5 s
+  const LATEST_SLOW_INTERVAL_MS = 5000;
+  const SUBMIT_BUTTON_SELECTOR = '[data-e2e-locator="console-submit-button"], [data-cy="submit-code-btn"]';
   // LeetCode verdict codes. Anything else means "still judging".
   const FINAL_STATUS_CODES = new Set([10, 11, 12, 13, 14, 15, 16, 20, 21, 30]);
   const ACCEPTED_STATUS_CODE = 10;
@@ -253,6 +262,19 @@
     return (data && data.submissionDetails) || null;
   }
 
+  async function fetchLatestSubmission(questionSlug) {
+    const data = await graphql(
+      `query latestSubmission($questionSlug: String!) {
+        questionSubmissionList(questionSlug: $questionSlug, offset: 0, limit: 1) {
+          submissions { id timestamp statusDisplay isPending }
+        }
+      }`,
+      { questionSlug },
+    );
+    const list = data && data.questionSubmissionList && data.questionSubmissionList.submissions;
+    return list && list[0] ? list[0] : null;
+  }
+
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   /** Percentiles can lag the verdict by a moment; retry a few times for them. */
@@ -415,7 +437,7 @@
   });
 
   // ---- path 2: submission id in the URL ------------------------------------------
-  const seenSubmissionUrls = new Set();
+  const watchedSubmissions = new Set();
 
   async function watchSubmission(slug, submissionId) {
     const deadline = Date.now() + POLL_MAX_MS;
@@ -462,8 +484,8 @@
     const m = path.match(SUBMISSION_URL_RE);
     if (!m) return;
     const [, slug, submissionId] = m;
-    if (seenSubmissionUrls.has(submissionId)) return;
-    seenSubmissionUrls.add(submissionId);
+    if (watchedSubmissions.has(submissionId)) return;
+    watchedSubmissions.add(submissionId);
     log('submission URL detected', submissionId);
     watchSubmission(slug, submissionId);
   }
@@ -478,4 +500,62 @@
   } catch {
     /* navigation API unavailable */
   }
+
+  // ---- path 3: Submit was pressed; follow the newest submission ---------------------
+  const pollingSlugs = new Set();
+
+  async function pollLatestSubmission(slug, sinceS) {
+    if (pollingSlugs.has(slug)) return;
+    pollingSlugs.add(slug);
+    try {
+      const deadline = Date.now() + POLL_MAX_MS;
+      for (let i = 0; Date.now() < deadline; i++) {
+        await sleep(i < LATEST_FAST_POLLS ? POLL_INTERVAL_MS : LATEST_SLOW_INTERVAL_MS);
+        let latest = null;
+        try {
+          latest = await fetchLatestSubmission(slug);
+        } catch (err) {
+          log('submission list failed', err.message);
+          continue;
+        }
+        if (!latest) continue;
+        const id = String(latest.id);
+        // Only a submission made after the trigger counts; the top entry may be old.
+        if (Number(latest.timestamp) < sinceS - 120) continue;
+        if (watchedSubmissions.has(id) || handled.has(id)) return; // another path has it
+        watchedSubmissions.add(id);
+        log('new submission found via submission list', id, latest.statusDisplay);
+        watchSubmission(slug, id);
+        return;
+      }
+      log('no new submission appeared after Submit on', slug);
+    } finally {
+      pollingSlugs.delete(slug);
+    }
+  }
+
+  function onSubmitTriggered(how) {
+    const slug = currentSlug();
+    if (!slug) return;
+    log(`submit triggered (${how}) on ${slug}`);
+    pollLatestSubmission(slug, serverNowS());
+  }
+
+  document.addEventListener(
+    'click',
+    (event) => {
+      const target = event.target;
+      if (target && typeof target.closest === 'function' && target.closest(SUBMIT_BUTTON_SELECTOR)) {
+        onSubmitTriggered('button');
+      }
+    },
+    true,
+  );
+  document.addEventListener(
+    'keydown',
+    (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') onSubmitTriggered('shortcut');
+    },
+    true,
+  );
 })();

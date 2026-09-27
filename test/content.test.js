@@ -34,10 +34,15 @@ const ACCEPTED_DETAILS = {
   question: { questionId: '1', titleSlug: 'two-sum' },
 };
 
-function bootPage({ pathname = '/problems/two-sum/', submissionDetails = () => ACCEPTED_DETAILS } = {}) {
+function bootPage({
+  pathname = '/problems/two-sum/',
+  submissionDetails = () => ACCEPTED_DETAILS,
+  latestSubmission = () => null,
+} = {}) {
   const sent = [];
   const graphqlCalls = [];
   const listeners = {};
+  const docListeners = {};
   const intervals = [];
 
   const window = {
@@ -52,7 +57,9 @@ function bootPage({ pathname = '/problems/two-sum/', submissionDetails = () => A
     documentElement: { dataset: {} },
     body: null, // no toasts in tests
     cookie: 'csrftoken=abc',
-    addEventListener() {},
+    addEventListener(name, fn) {
+      (docListeners[name] ||= []).push(fn);
+    },
   };
   const store = {};
   window.sessionStorage = {
@@ -86,7 +93,10 @@ function bootPage({ pathname = '/problems/two-sum/', submissionDetails = () => A
     graphqlCalls.push(body);
     let data;
     if (body.query.includes('submissionDetails(')) data = { submissionDetails: submissionDetails(body.variables) };
-    else if (body.query.includes('question(')) data = { question: QUESTION };
+    else if (body.query.includes('questionSubmissionList(')) {
+      const latest = latestSubmission(body.variables);
+      data = { questionSubmissionList: { submissions: latest ? [latest] : [] } };
+    } else if (body.query.includes('question(')) data = { question: QUESTION };
     else data = {};
     return new Response(JSON.stringify({ data }));
   };
@@ -120,6 +130,12 @@ function bootPage({ pathname = '/problems/two-sum/', submissionDetails = () => A
       (listeners.message || []).forEach((fn) =>
         fn({ source: innerWindow, data: { source: 'leetgit', type: 'accepted', payload } }),
       ),
+    clickSubmit: () =>
+      (docListeners.click || []).forEach((fn) =>
+        fn({ target: { closest: (sel) => (sel.includes('console-submit-button') ? {} : null) } }),
+      ),
+    pressCtrlEnter: () =>
+      (docListeners.keydown || []).forEach((fn) => fn({ ctrlKey: true, key: 'Enter', target: null })),
   };
 }
 
@@ -218,4 +234,47 @@ test('both paths for the same submission produce a single sync', async () => {
   await settle();
   await settle();
   assert.equal(page.sent.length, 1);
+});
+
+test('submit path: clicking Submit follows the newest submission to acceptance', async () => {
+  let asked = 0;
+  const page = bootPage({
+    latestSubmission: () => {
+      asked++;
+      // Nothing new for the first two polls, then the fresh submission appears.
+      return asked < 3 ? { id: '100', timestamp: NOW_S - 86400, statusDisplay: 'Accepted', isPending: 'Not Pending' }
+                       : { id: '800', timestamp: NOW_S, statusDisplay: 'Accepted', isPending: 'Not Pending' };
+    },
+  });
+  page.clickSubmit();
+  assert.ok(await waitFor(() => page.sent.length === 1, 200));
+  assert.equal(page.sent[0].payload.submissionId, '800');
+  assert.ok(asked >= 3);
+});
+
+test('submit path: Ctrl+Enter triggers the same follow-up, and the URL path does not double-sync', async () => {
+  const page = bootPage({
+    latestSubmission: () => ({ id: '801', timestamp: NOW_S, statusDisplay: 'Accepted', isPending: 'Not Pending' }),
+  });
+  page.pressCtrlEnter();
+  page.navigate('/problems/two-sum/submissions/801/');
+  assert.ok(await waitFor(() => page.sent.length >= 1, 200));
+  await settle();
+  await settle();
+  assert.equal(page.sent.length, 1);
+  assert.equal(page.sent[0].payload.submissionId, '801');
+});
+
+test('submit path: an old top submission is not mistaken for a new one', async () => {
+  let asked = 0;
+  const page = bootPage({
+    latestSubmission: () => {
+      asked++;
+      return asked < 3 ? { id: '100', timestamp: NOW_S - 86400, statusDisplay: 'Accepted', isPending: 'Not Pending' }
+                       : { id: '802', timestamp: NOW_S, statusDisplay: 'Accepted', isPending: 'Not Pending' };
+    },
+  });
+  page.clickSubmit();
+  assert.ok(await waitFor(() => page.sent.length === 1, 200));
+  assert.notEqual(page.sent[0].payload.submissionId, '100');
 });
